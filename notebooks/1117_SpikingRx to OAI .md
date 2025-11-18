@@ -59,14 +59,24 @@ sudo ./build_oai --gNB --nrUE -w SIMU
 
 ### 2.1 Start gNB
 ```bash
-cd ~/openairinterface5g/cmake_targets/ran_build/build  
-sudo ./nr-softmodem --rfsim --sa \
-  -O ci-scripts/conf_files/gnb.sa.band78.106prb.rfsim.conf
+cd ~/openairinterface5g
+source oaienv
+cd cmake_targets/ran_build/build
+
+sudo ./nr-softmodem \
+  -O ../../../targets/PROJECTS/GENERIC-NR-5GC/CONF/gnb.sa.band78.fr1.106PRB.usrpb210.conf \
+  --rfsim \
+  --gNBs.[0].min_rxtxtime 6
 ```
 ### 2.2 Start UE (new terminal)
 ```bash
-cd ~/openairinterface5g/cmake_targets/ran_build/build  
-sudo ./nr-uesoftmodem --rfsim --sa
+cd ~/openairinterface5g
+source oaienv
+cd cmake_targets/ran_build/build
+
+sudo ./nr-uesoftmodem \
+  --rfsim \
+  -r 106 --numerology 1 --band 78 -C 3619200000
 ```
 ### 2.3 Expected Successful Connection Output
 <img width="368" height="512" alt="image" src="https://github.com/user-attachments/assets/7aaa75b1-4c89-4012-b2e4-7c43d09c9269" />
