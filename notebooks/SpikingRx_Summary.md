@@ -59,20 +59,22 @@ LDPC decoding belongs to the next module in the PHY chain.
 
 Traditional 5G NR receiver:
 
+```yaml
 FFT
 → Channel Estimation
 → Equalizer
 → Soft Demapper (LLR)
 → LDPC Decoder
+```
 
+
+SpikingRx receiver:
 
 ```yaml
-SpikingRx receiver:
-```
 FFT
 → SpikingRx (direct LLR output)
 → LDPC Decoder
-
+```
 
 **Replaced blocks:**
 
