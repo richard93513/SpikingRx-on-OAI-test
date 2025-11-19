@@ -125,3 +125,268 @@ This project successfully achieves something the original paper **did not**:
   - LIF neurons  
   - Rate pooling  
   - ANN LLR Readout  
+
+# 2. System Architecture and File Mapping
+
+The purpose of this chapter is:
+
+- To present the entire system (OAI → Loader → SpikingRx → LLR → Visualization) in a block-diagram style  
+- To explain the role of each block and how it corresponds to the original SpikingRx paper  
+- To describe how each module in this project maps to the components described in the paper  
+
+
+## 2.1 Overall System Architecture
+
+Below is the technical flow diagram of the entire project system:
+
+(Place your diagram here — same location as your notes)
+
+[Full architecture diagram: OAI → Python Loader → SpikingRx SNN → LLR → Visualization]
+
+
+## 2.2 Explanation of Each Block (Purpose and Relation to the Paper)
+
+Below is the detailed explanation of each system block.
+
+
+### (1) OAI gNB/UE (Full-grid FFT Dump)
+
+**Function**
+
+- Executes 5G NR downlink OFDM receive chain  
+- After FFT, obtains the entire resource grid  
+- You modified OAI to export this grid as binary data  
+
+**Input**  
+- Downlink PDSCH from rfsim mode (simulated or real RF)
+
+**Output**  
+
+```markdown
+/tmp/spx_fullgrid_f{frame}_s{slot}.bin
+```
+
+Format: `complex16`, containing **13 OFDM symbols × 1272 subcarriers**
+
+**Relation to the Paper**  
+Corresponds to **Figure 1: “OFDM Receiver Front-End”** in the SpikingRx paper.  
+The paper uses simulation-generated grids; this project uses real OAI outputs.
+
+
+---
+
+### (2) Python Loader (`load_oai_fullgrid`)
+
+**Function**
+
+Converts OAI dump format into the spiking feature grid required by SpikingRx.
+
+**Input**
+
+- `complex16` full-grid dump from OAI
+
+**Processing Steps**
+
+- Parse binary file  
+- Reconstruct resource grid  
+- Normalize  
+- Compress/mapping into **32×32**  
+- Expand into **T timesteps** (required for LIF temporal dynamics)
+
+**Output**
+
+```yaml
+(1, T, 2, 32, 32) Tensor
+```
+
+**Relation to the Paper**
+
+Corresponds to:
+
+**Input preprocessing module** in SpikingRx.  
+In the paper, the input grid is simulation-based; in this project, OAI’s real grid is converted into the same consistent format.
+
+---
+
+### (3) SpikingRx SNN Receiver (Core)
+
+**Input**
+
+```csharp
+(1, T, 2, 32, 32)
+```
+
+Then the forward flow is:
+
+```yaml
+↓ StemConv (2 → 16)
+(1, T, 16, 32, 32)
+
+↓ SEW1
+(1, T, 16, 32, 32)
+
+↓ SEW2
+(1, T, 32, 32, 32)
+
+↓ SEW3
+(1, T, 32, 32, 32)
+
+↓ SEW4
+(1, T, 64, 32, 32)
+
+↓ SEW5
+(1, T, 64, 32, 32)
+
+↓ SEW6
+(1, T, 64, 32, 32)
+
+↓ Temporal Mean (across T)
+(1, 64, 32, 32)
+
+↓ ANN Readout (1×1 Conv → ReLU → 1×1 Conv)
+(1, 32, 32, 2) = LLR
+```
+
+---
+
+#### 3.1 StemConv (First spiking feature extractor)
+
+**Modules**
+
+- Conv (2 → base_ch)  
+- SpikeNorm  
+- LIF (unrolling across timesteps)
+
+**Purpose**  
+Transforms raw I/Q features into spiking feature maps — the entry point to the SNN backbone.
+
+**Relation to the Paper**  
+Corresponds to the **“Stem” block** in the SpikingRx architecture.
+
+
+#### 3.2 SEW Blocks × 6 (Spiking SNN Backbone)
+
+Each SEW block contains:
+
+- Conv → Norm → LIF  
+- Conv → Norm → LIF  
+- Shortcut branch  
+- Spiking element-wise merge (SEW merge)
+
+**Purpose**
+
+Learn complex:
+
+- Channel remnants  
+- Constellation deformation  
+- Symbol distribution patterns  
+
+→ Produces a high-dimensional spiking representation.
+
+**Relation to the Paper**
+
+Corresponds to **Figure 3: “SEW-ResNet”**.
+
+
+#### 3.3 Temporal Rate Pooling
+
+Average across T timesteps:
+
+```yaml
+(1, T, C, 32, 32) → (1, C, 32, 32)
+```
+
+**Purpose**
+
+Convert multi-timestep spiking activity into a stable feature map, used for soft demodulation.
+
+**Relation to the Paper**
+
+Corresponds to **time-averaged spiking representation.**
+
+
+#### 3.4 ANN Readout (Soft Demodulation → LLR Output)
+
+- 1×1 Conv  
+- ReLU  
+- 1×1 Conv  
+
+Each RE outputs 2 values: **LLR for bit0 and bit1**
+
+**Purpose**
+
+Translate spike features into bitwise likelihood ratios.
+
+**Relation to the Paper**
+
+Corresponds to **“LLR-compatible Readout Module”** in the original architecture.
+
+
+---
+
+### (4) Visualization Modules
+
+Includes:
+
+- **LLR heatmap**  
+  Shows soft bit decisions from SpikingRx.
+
+- **Spike rate per stage**  
+  Visualizes sparsity and spiking dynamics per SEW layer.
+
+- **Spike GIF**  
+  Shows timestep progression for each SEW block.
+
+- **Training before/after comparison**  
+  Demonstrates SNN learning dynamics (paper contains similar analyses; this project expands beyond).
+
+
+**Relation to the Paper**  
+Matches the **Experiments / Ablation Section**, with more detailed spike-activity visualization.
+
+
+---
+
+## 2.3 Project Folder Structure and Code Mapping
+
+```yaml
+SpikingRx-on-OAI/
+│
+├── src/
+│ ├── data/
+│ │ └── oai_to_spikingrx_tensor.py ← Paper: Input preprocessing
+│ │
+│ ├── models/
+│ │ ├── conv_block.py ← Conv + Norm
+│ │ ├── norm_layer.py ← SpikeNorm
+│ │ ├── lif_neuron.py ← LIF + surrogate gradient
+│ │ ├── sew_block.py ← SEW-ResNet block
+│ │ └── spikingrx_model.py ← Full SpikingRx Receiver
+│ │
+│ ├── train/
+│ │ ├── dataset_simple_ofdm.py ← Synthetic QPSK OFDM dataset
+│ │ └── train_spikingrx.py ← Surrogate-gradient training
+│ │
+│ ├── inference/
+│ │ └── run_spikingrx_on_oai_dump.py ← OAI dump → LLR inference
+│ │
+│ └── visualize/
+│ └── visualize_spiking_activity.py ← Spike activity, before/after comparison
+│
+└── docs/
+├── images/ ← Architecture diagrams, model diagrams
+├── results/ ← LLR, spike GIF, comparison graphs
+└── notes/ ← Research notes, design documentation
+```
+
+
+---
+
+## 2.4 Chapter Summary
+
+This chapter explained:
+
+- How SpikingRx integrates with OAI  
+- The technical role of each system block (input, processing, output)  
+- How each module corresponds to specific sections of the SpikingRx paper  
+- How the project directory structure cleanly reflects the architecture described in the paper 
