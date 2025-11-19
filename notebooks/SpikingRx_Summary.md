@@ -162,7 +162,7 @@ Below is the detailed explanation of each system block.
 
 **Output**  
 
-```markdown
+```bash
 /tmp/spx_fullgrid_f{frame}_s{slot}.bin
 ```
 
